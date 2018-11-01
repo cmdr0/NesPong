@@ -70,7 +70,7 @@ vblankwait2:
   sta $2001
 
 forever:
-  jmp forever:
+  jmp forever
 
 NMI:
   rti                         ; Immediately exit the interrupt
