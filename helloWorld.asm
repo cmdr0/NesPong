@@ -48,7 +48,7 @@ vblankwait1:
 clrmem:
   sta $0000, x
   sta $0100, x
-  ; skip $0200
+  ; skip $0200, because it's where we write sprite data? TODO
   sta $0300, x
   sta $0400, x
   sta $0500, x
@@ -65,18 +65,87 @@ vblankwait2:
   bpl vblankwait2
 
 ;==============================================================================;
+; Load palette info
+; In order to write to the PPU, we have to use ports/registers on the CPU; so to
+;   tell the CPU that we'd like to start writing to $3F00 (palette registers) on
+;   the PPU, we have to talk to $2006 on the CPU... twice, because we can only
+;   write a byte at a time. So we write the first part of the register, then
+;   the second, then shove a bunch of info into $2007.
+; ref: https://wiki.nesdev.com/w/index.php/PPU_registers#PPUSTATUS
+; ref: https://wiki.nesdev.com/w/index.php/PPU_registers#PPUADDR
+loadPalette:
+  lda $2002                   ; Read to reset the latch on $2006...
+  lda #$3F                    ; 
+  sta $2006                   ; $3F...
+  lda #$00                    ; 
+  sta $2006                   ; ...00
 
-  lda #%10000000              ; Intensify blues
+;------------------------------------------------------------------------------;
+; Brother may I have some loops
+; The pseudo-code here really says it all, but we're going to push 32 bytes from
+;   our stored 'palette' variable into $2007, which (per above) should write
+;   into $3F00-$3F1F on the PPU
+  ldx #$00                    ; x = 0
+loadPaletteLoop:
+  lda palette, x              ; a = palette[x]
+  sta $2007                   ; a => $2007
+  inx                         ; x++
+  cpx #$20                    ; x==32 ?
+  bne loadPaletteLoop         ;   jmp loadPaletteLoop
+
+;------------------------------------------------------------------------------;
+; Spritefall
+; Alright, time to push data into sprite land.  Each sprite requires 4 bytes of
+;   info to write:
+; $0200, $0204...  Y Position (#00-#EF)
+; $0201, $0205...  Tile Number (from the Pattern Table)
+; $0202, $0206...  Attributes (see below)
+; $0203, $0207...  X Position (#00-#F9)
+;
+; Attributes:
+; +-------- Flip sprite vertically
+; |+------- Flip sprite horizontally
+; ||+------ ? In front of background : Behind background
+; |||   ++- Color palette of sprite (0-3)
+; 765---10
+;
+  lda #$00                    
+  sta $0201                   ; Tile 0
+  sta $0202                   ; Palette 0, Behind BG
+  lda #$80                    
+  sta $0200                   ; Middle of the screen (Y)
+  sta $0203                   ; Middle of the screen (X)
+
+;------------------------------------------------------------------------------;
+; Settings
+  lda #%10000000              ; Enable NMI, use Pattern Table 0
+  sta $2000
+
+  lda #%00010000              ; Enable sprites
   sta $2001
 
 forever:
   jmp forever
 
+; Looks like this just copies $0200-$02FF into the PPU through OAM? TODO
 NMI:
+  lda #$00
+  sta $2003
+  lda #$02
+  sta $4014
+
   rti                         ; Immediately exit the interrupt
 
 ;MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM;
   .bank 1
+
+;==============================================================================;
+  .org $E000
+palette:
+  .db $30,$21,$22,$12,$30,$23,$14,$04,$30,$25,$16,$07,$30,$29,$2A,$1B
+  .db $30,$21,$22,$12,$30,$23,$14,$04,$30,$25,$16,$07,$30,$29,$2A,$1B
+
+;==============================================================================;
   .org $FFFA                  ; Memory address for the first vector
 
   .dw NMI                     ; Non-Mistakable Interrupt
